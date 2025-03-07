@@ -15,9 +15,6 @@ inputs:
   conjur_authn_jwt_service_id:
     description: 'Service ID for Conjur JWT Authenticator'
     required: true
-  conjur_jwt_identity:
-    description: 'Identity for JWT authentication'
-    required: true
   conjur_policy_branch:
     description: 'Conjur policy branch to load policies into'
     required: true
@@ -62,7 +59,6 @@ runs:
         CONJUR_URL: ${{ inputs.conjur_url }}
         CONJUR_ACCOUNT: ${{ inputs.conjur_account }}
         CONJUR_AUTHN_JWT_SERVICE_ID: ${{ inputs.conjur_authn_jwt_service_id }}
-        CONJUR_JWT_IDENTITY: ${{ inputs.conjur_jwt_identity }}
         GITHUB_TOKEN: ${{ github.token }}
         DEBUG: ${{ inputs.debug }}
       run: |
@@ -75,7 +71,6 @@ runs:
         validate_input "$CONJUR_URL" "conjur_url"
         validate_input "$CONJUR_ACCOUNT" "conjur_account"
         validate_input "$CONJUR_AUTHN_JWT_SERVICE_ID" "conjur_authn_jwt_service_id"
-        validate_input "$CONJUR_JWT_IDENTITY" "conjur_jwt_identity"
         
         # Authenticate to Conjur using JWT token
         log_info "Authenticating to Conjur using JWT token"
@@ -88,7 +83,7 @@ runs:
           -X POST \
           -H "Content-Type: application/x-www-form-urlencoded" \
           --data-urlencode "jwt=$GITHUB_TOKEN" \
-          "$CONJUR_URL/authn-jwt/$CONJUR_AUTHN_JWT_SERVICE_ID/$CONJUR_ACCOUNT/$CONJUR_JWT_IDENTITY/authenticate")
+          "$CONJUR_URL/authn-jwt/$CONJUR_AUTHN_JWT_SERVICE_ID/$CONJUR_ACCOUNT/authenticate")
         
         # Check if authentication was successful
         if [ $? -ne 0 ]; then

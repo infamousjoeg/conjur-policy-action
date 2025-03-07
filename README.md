@@ -70,7 +70,6 @@ jobs:
           conjur_url: ${{ secrets.CONJUR_URL }}
           conjur_account: ${{ secrets.CONJUR_ACCOUNT }}
           conjur_authn_jwt_service_id: github
-          conjur_jwt_identity: host/github-actions/repo/${{ github.repository }}
           conjur_policy_branch: root
           policy_paths: 'policies/**/*.yml'
 ```
@@ -82,7 +81,6 @@ jobs:
 | `conjur_url` | URL of the Conjur instance | Yes | - |
 | `conjur_account` | Conjur account name | Yes | - |
 | `conjur_authn_jwt_service_id` | Service ID for Conjur JWT Authenticator | Yes | - |
-| `conjur_jwt_identity` | Identity for JWT authentication | Yes | - |
 | `conjur_policy_branch` | Conjur policy branch to load policies into | Yes | - |
 | `policy_paths` | Paths to policy files relative to repository root (glob pattern supported) | Yes | `policies/**/*.yml` |
 | `debug` | Enable debug output | No | `false` |

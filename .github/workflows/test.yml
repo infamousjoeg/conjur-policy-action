@@ -47,7 +47,6 @@ jobs:
           conjur_url: 'https://example.com'
           conjur_account: 'default'
           conjur_authn_jwt_service_id: 'github'
-          conjur_jwt_identity: 'host/github-actions/test'
           conjur_policy_branch: 'root'
           policy_paths: 'policies/**/*.yml'
 
