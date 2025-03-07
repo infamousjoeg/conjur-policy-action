@@ -1,0 +1,220 @@
+name: 'Conjur Policy as Code'
+description: 'Automatically loads Conjur Policy as Code from a GitHub repository using authn-jwt authentication'
+author: 'Your Organization'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  conjur_url:
+    description: 'URL of the Conjur instance'
+    required: true
+  conjur_account:
+    description: 'Conjur account name'
+    required: true
+  conjur_authn_jwt_service_id:
+    description: 'Service ID for Conjur JWT Authenticator'
+    required: true
+  conjur_jwt_identity:
+    description: 'Identity for JWT authentication'
+    required: true
+  conjur_policy_branch:
+    description: 'Conjur policy branch to load policies into'
+    required: true
+  policy_paths:
+    description: 'Paths to policy files relative to repository root (glob pattern supported)'
+    required: true
+    default: 'policies/**/*.yml'
+  debug:
+    description: 'Enable debug output'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up environment
+      shell: bash
+      run: |
+        echo "Setting up environment for Conjur Policy as Code Action"
+        # Create a temporary directory for our work
+        mkdir -p /tmp/conjur-policy-action
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        echo "Installing dependencies..."
+        # Check if we're on a supported platform
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+          brew install curl jq
+        else
+          echo "::error::Unsupported runner OS: $RUNNER_OS"
+          exit 1
+        fi
+
+    - name: Authenticate to Conjur using JWT
+      shell: bash
+      id: authenticate
+      env:
+        CONJUR_URL: ${{ inputs.conjur_url }}
+        CONJUR_ACCOUNT: ${{ inputs.conjur_account }}
+        CONJUR_AUTHN_JWT_SERVICE_ID: ${{ inputs.conjur_authn_jwt_service_id }}
+        CONJUR_JWT_IDENTITY: ${{ inputs.conjur_jwt_identity }}
+        GITHUB_TOKEN: ${{ github.token }}
+        DEBUG: ${{ inputs.debug }}
+      run: |
+        # Source the helper script
+        . ${{ github.action_path }}/scripts/helpers.sh
+
+        log_debug "Starting Conjur JWT authentication process"
+        
+        # Validate inputs
+        validate_input "$CONJUR_URL" "conjur_url"
+        validate_input "$CONJUR_ACCOUNT" "conjur_account"
+        validate_input "$CONJUR_AUTHN_JWT_SERVICE_ID" "conjur_authn_jwt_service_id"
+        validate_input "$CONJUR_JWT_IDENTITY" "conjur_jwt_identity"
+        
+        # Authenticate to Conjur using JWT token
+        log_info "Authenticating to Conjur using JWT token"
+        
+        # Create the authentication request
+        log_debug "Preparing JWT authentication request"
+        
+        # Perform the authentication
+        auth_response=$(curl -s -k \
+          -X POST \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          --data-urlencode "jwt=$GITHUB_TOKEN" \
+          "$CONJUR_URL/authn-jwt/$CONJUR_AUTHN_JWT_SERVICE_ID/$CONJUR_ACCOUNT/$CONJUR_JWT_IDENTITY/authenticate")
+        
+        # Check if authentication was successful
+        if [ $? -ne 0 ]; then
+          log_error "Failed to authenticate to Conjur"
+          exit 1
+        fi
+        
+        # Encode the authentication token
+        auth_token=$(echo -n "$auth_response" | base64 | tr -d '\n')
+        
+        # Save the token for later steps
+        echo "CONJUR_AUTH_TOKEN=$auth_token" >> $GITHUB_ENV
+        
+        log_success "Successfully authenticated to Conjur"
+
+    - name: Find policy files
+      shell: bash
+      id: find_policies
+      env:
+        POLICY_PATHS: ${{ inputs.policy_paths }}
+        DEBUG: ${{ inputs.debug }}
+      run: |
+        # Source the helper script
+        . ${{ github.action_path }}/scripts/helpers.sh
+        
+        log_info "Searching for policy files: $POLICY_PATHS"
+        
+        # Find all policy files matching the pattern
+        policy_files=$(find . -path "./$POLICY_PATHS" -type f | sort)
+        
+        # Check if we found any policy files
+        if [ -z "$policy_files" ]; then
+          log_warning "No policy files found matching pattern: $POLICY_PATHS"
+          echo "POLICY_FILES=" >> $GITHUB_ENV
+        else
+          # Save the list of policy files
+          echo "$policy_files" > /tmp/conjur-policy-action/policy_files.txt
+          
+          file_count=$(echo "$policy_files" | wc -l | tr -d ' ')
+          log_info "Found $file_count policy files"
+          
+          # Save the file count for later steps
+          echo "POLICY_FILES=/tmp/conjur-policy-action/policy_files.txt" >> $GITHUB_ENV
+          echo "POLICY_FILE_COUNT=$file_count" >> $GITHUB_ENV
+          
+          # Log the files in debug mode
+          if [ "$DEBUG" == "true" ]; then
+            log_debug "Policy files found:"
+            echo "$policy_files" | sed 's/^/  - /'
+          fi
+        fi
+
+    - name: Load policies to Conjur
+      shell: bash
+      id: load_policies
+      env:
+        CONJUR_URL: ${{ inputs.conjur_url }}
+        CONJUR_ACCOUNT: ${{ inputs.conjur_account }}
+        CONJUR_POLICY_BRANCH: ${{ inputs.conjur_policy_branch }}
+        DEBUG: ${{ inputs.debug }}
+      run: |
+        # Source the helper script
+        . ${{ github.action_path }}/scripts/helpers.sh
+        
+        # Check if we have any policy files to load
+        if [ -z "$POLICY_FILES" ]; then
+          log_warning "No policies to load"
+          exit 0
+        fi
+        
+        log_info "Loading $POLICY_FILE_COUNT policy files to Conjur"
+        
+        # Process each policy file
+        success_count=0
+        failure_count=0
+        
+        while IFS= read -r policy_file; do
+          # Skip empty lines
+          [ -z "$policy_file" ] && continue
+          
+          # Get the relative path from the repository root
+          relative_path=${policy_file#./}
+          
+          log_info "Processing policy file: $relative_path"
+          
+          # Determine policy ID from file path (strip extension and convert / to -)
+          policy_id=$(echo "$relative_path" | sed 's/\.yml$//' | sed 's/\.yaml$//' | sed 's/\//-/g')
+          
+          log_debug "Using policy ID: $policy_id"
+          
+          # Load the policy file to Conjur
+          load_result=$(curl -s -k \
+            -X POST \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -H "Authorization: Token token=\"$CONJUR_AUTH_TOKEN\"" \
+            --data-binary "@$policy_file" \
+            "$CONJUR_URL/policies/$CONJUR_ACCOUNT/policy/$CONJUR_POLICY_BRANCH")
+          
+          if [ $? -eq 0 ]; then
+            # Check if Conjur reported an error
+            if echo "$load_result" | jq -e '.error' > /dev/null 2>&1; then
+              error_msg=$(echo "$load_result" | jq -r '.error')
+              log_error "Failed to load policy $policy_id: $error_msg"
+              failure_count=$((failure_count + 1))
+            else
+              log_success "Successfully loaded policy $policy_id"
+              success_count=$((success_count + 1))
+            fi
+          else
+            log_error "Failed to load policy $policy_id: Network or server error"
+            failure_count=$((failure_count + 1))
+          fi
+          
+        done < "$POLICY_FILES"
+        
+        # Report loading summary
+        log_info "Policy loading summary: $success_count succeeded, $failure_count failed"
+        
+        # Set step outputs
+        echo "success_count=$success_count" >> $GITHUB_OUTPUT
+        echo "failure_count=$failure_count" >> $GITHUB_OUTPUT
+        
+        # Fail the action if any policy failed to load
+        if [ $failure_count -gt 0 ]; then
+          log_error "Not all policies were loaded successfully"
+          exit 1
+        fi
+        
+        log_success "All policies loaded successfully"

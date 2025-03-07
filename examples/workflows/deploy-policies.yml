@@ -1,0 +1,66 @@
+name: Deploy Conjur Policies
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'policies/**'
+  pull_request:
+    paths:
+      - 'policies/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy policies to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+jobs:
+  validate-policies:
+    name: Validate Conjur Policies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install conjur-policy-validator
+        run: |
+          pip install conjur-policy-validator
+          
+      - name: Validate policies
+        run: |
+          conjur-policy-validator validate ./policies
+  
+  deploy-policies:
+    name: Deploy Conjur Policies
+    runs-on: ubuntu-latest
+    # Only deploy on push to main or manual dispatch, not on PR
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: validate-policies
+    
+    # Required permissions for OIDC token
+    permissions:
+      id-token: write
+      contents: read
+    
+    # Use environments to control deployments
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Deploy Conjur Policies
+        uses: your-org/conjur-policy-action@v1
+        with:
+          conjur_url: ${{ secrets.CONJUR_URL }}
+          conjur_account: ${{ secrets.CONJUR_ACCOUNT }}
+          conjur_authn_jwt_service_id: github
+          conjur_jwt_identity: host/github-actions/repo/${{ github.repository }}
+          conjur_policy_branch: root
+          policy_paths: 'policies/**/*.yml'
+          debug: ${{ github.event_name == 'workflow_dispatch' }}

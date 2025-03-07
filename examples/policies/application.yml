@@ -1,0 +1,30 @@
+# Example Conjur policy for an application
+# This is a sample policy file that would be managed in your repository
+
+- !policy
+  id: applications
+  body:
+    - !policy
+      id: sample-app
+      body:
+        # Define a host identity for the application
+        - !host
+
+        # Define variables the application will need
+        - &variables
+          - !variable db/username
+          - !variable db/password
+          - !variable api/key
+          - !variable config
+
+        # Grant the host identity access to variables
+        - !permit
+          role: !host
+          privileges: [ read, execute ]
+          resources: *variables
+
+        # Define an annotation to track the source
+        - !annotation
+          id: host
+          kubernetes: "true"
+          description: "Managed by GitHub Actions"
